@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     github_token: str | None = None
     data_dir: Path = Path("data")
     dist_dir: Path = Path("dist")
-    templates_dir: Path = Path("src/trendscope/templates")
+    templates_dir: Path = Path(__file__).parent / "templates"
 
     http_timeout_seconds: float = 30.0
     user_agent: str = "trendscope/0.1 (+https://github.com/)"

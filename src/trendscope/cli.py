@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import typer
 
 app = typer.Typer(
@@ -28,9 +30,19 @@ def collect(
 
 
 @app.command()
-def render() -> None:
+def render(
+    data_dir: Path | None = typer.Option(
+        None, "--data-dir", help="Override data directory (default: settings.data_dir)."
+    ),
+    dist_dir: Path | None = typer.Option(
+        None, "--dist-dir", help="Override dist directory (default: settings.dist_dir)."
+    ),
+) -> None:
     """Render templates from ``data/`` to ``dist/``."""
-    typer.echo("[stub] render: would render templates to dist/")
+    from trendscope.render import render_site
+
+    out = render_site(data_dir=data_dir, dist_dir=dist_dir)
+    typer.echo(f"Rendered site to {out}")
 
 
 @app.command()

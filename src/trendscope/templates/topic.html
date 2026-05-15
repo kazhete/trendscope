@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}{{ topic_meta.display }} · Trendscope{% endblock %}
+{% block content %}
+<div class="flex items-baseline justify-between mb-8 flex-wrap gap-2">
+    <h1 class="text-3xl font-bold">{{ topic_meta.display }}</h1>
+    <span class="text-sm text-slate-500">{{ total_count }} items</span>
+</div>
+
+{% if total_count == 0 %}
+<p class="text-slate-500 italic">No items yet. Run <code class="px-1 bg-slate-200 rounded">trendscope collect</code> first.</p>
+{% endif %}
+
+{% for group in groups %}
+<section class="mb-10">
+    <h2 class="text-lg font-semibold text-slate-700 mb-4 border-b border-slate-200 pb-2">
+        {{ group.label }}
+        <span class="text-sm font-normal text-slate-500">({{ group.entries|length }})</span>
+    </h2>
+    <ul class="space-y-3">
+        {% for item in group.entries %}
+        <li class="bg-white p-4 rounded border border-slate-200 hover:border-slate-300 transition-colors">
+            <a href="{{ item.url }}" target="_blank" rel="noopener noreferrer"
+               class="text-blue-700 hover:underline font-medium">
+                {{ item.title }}
+            </a>
+            {% if item.summary %}
+            <p class="text-sm text-slate-600 mt-1">{{ item.summary }}</p>
+            {% endif %}
+            <div class="text-xs text-slate-500 mt-2 flex flex-wrap gap-x-3 gap-y-1">
+                <span class="font-mono">{{ item.source }}</span>
+                {% if item.meta.stars is not none %}<span>{{ item.meta.stars }} stars</span>{% endif %}
+                {% if item.meta.language %}<span>{{ item.meta.language }}</span>{% endif %}
+                {% if item.meta.points is not none %}<span>{{ item.meta.points }} points</span>{% endif %}
+                {% if item.meta.num_comments is not none %}<span>{{ item.meta.num_comments }} comments</span>{% endif %}
+                {% if item.meta.downloads is not none %}<span>{{ item.meta.downloads }} downloads</span>{% endif %}
+                {% if item.meta.price %}<span>{{ item.meta.price }}</span>{% endif %}
+                {% if item.meta.author %}<span>by {{ item.meta.author }}</span>{% endif %}
+                <span>{{ item.published_at.strftime("%Y-%m-%d") }}</span>
+            </div>
+        </li>
+        {% endfor %}
+    </ul>
+</section>
+{% endfor %}
+{% endblock %}

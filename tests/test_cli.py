@@ -29,9 +29,15 @@ def test_collect_single_source():
     assert "github_ai" in result.stdout
 
 
-def test_render():
-    result = runner.invoke(app, ["render"])
+def test_render(tmp_path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    dist_dir = tmp_path / "dist"
+    result = runner.invoke(
+        app, ["render", "--data-dir", str(data_dir), "--dist-dir", str(dist_dir)]
+    )
     assert result.exit_code == 0
+    assert (dist_dir / "index.html").exists()
 
 
 def test_build():
