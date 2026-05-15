@@ -20,7 +20,6 @@ import logging
 import re
 from collections.abc import Awaitable, Sequence
 from datetime import UTC, datetime, timedelta
-from math import log
 from typing import Any, Literal
 from urllib.parse import urljoin, urlparse
 
@@ -38,14 +37,15 @@ _PERIOD_DAYS: dict[Period, int] = {"day": 1, "week": 7, "month": 30}
 ODOO_APPS_BASE_URL = "https://apps.odoo.com"
 ODOO_APPS_BROWSE_URL = f"{ODOO_APPS_BASE_URL}/apps/modules/browse"
 
-# CSS selectors target the current apps.odoo.com markup. If the site changes,
-# update these constants and the corresponding tests in lockstep.
-ODOO_CARD_SELECTOR = ".loempia_panel_summary"
-ODOO_TITLE_SELECTOR = "h5 a, .loempia_panel_title a"
+# CSS selectors target the current apps.odoo.com markup (verified Nov 2026).
+# Each card is a div wrapping a single <a href> that contains the title (h5),
+# the author/price row, and the summary paragraph. The listing page does NOT
+# expose a download count, so score is derived from list position.
+ODOO_CARD_SELECTOR = ".loempia_app_card"
+ODOO_TITLE_SELECTOR = "h5"
 ODOO_AUTHOR_SELECTOR = ".loempia_panel_author"
 ODOO_PRICE_SELECTOR = ".loempia_panel_price"
-ODOO_DOWNLOADS_SELECTOR = ".loempia_panel_downloads"
-ODOO_SUMMARY_SELECTOR = ".loempia_panel_summary_text, .oe_module_desc"
+ODOO_SUMMARY_SELECTOR = "p.loempia_panel_summary"
 
 logger = logging.getLogger(__name__)
 
@@ -139,62 +139,51 @@ class EcommerceNewsCollector(Collector):
         r.raise_for_status()
         soup = await asyncio.to_thread(BeautifulSoup, r.text, "html.parser")
         cards = soup.select(ODOO_CARD_SELECTOR)[: self.apps_limit]
-        raws: list[dict[str, Any]] = []
-        for card in cards:
-            link_tag = card.select_one(ODOO_TITLE_SELECTOR)
+        items: list[Item] = []
+        # Card structure: <div class="loempia_app_card"><a href="..."> ... <h5>title</h5>
+        # ... <div class="loempia_panel_author">...</div> ... <p class="loempia_panel_summary">
+        # ...</p> ... </a></div>. Link is on the card's outer <a>; the listing
+        # has no download count, so score is by list position.
+        for idx, card in enumerate(cards):
+            link_tag = card.select_one("a[href]")
             if not isinstance(link_tag, Tag):
                 continue
             href = link_tag.get("href")
-            if not href or not isinstance(href, str):
+            if not isinstance(href, str) or not href:
                 continue
-            title = link_tag.get_text(strip=True)
+            title_tag = card.select_one(ODOO_TITLE_SELECTOR)
+            if not title_tag:
+                continue
+            title = title_tag.get_text(strip=True)
             if not title:
                 continue
+            url = urljoin(ODOO_APPS_BASE_URL, href)
             author_tag = card.select_one(ODOO_AUTHOR_SELECTOR)
             price_tag = card.select_one(ODOO_PRICE_SELECTOR)
-            downloads_tag = card.select_one(ODOO_DOWNLOADS_SELECTOR)
             summary_tag = card.select_one(ODOO_SUMMARY_SELECTOR)
-            raws.append(
-                {
-                    "title": title,
-                    "url": urljoin(ODOO_APPS_BASE_URL, href),
-                    "author": author_tag.get_text(strip=True) if author_tag else None,
-                    "price": price_tag.get_text(strip=True) if price_tag else None,
-                    "downloads": _parse_int(downloads_tag.get_text() if downloads_tag else None),
-                    "summary": _clean_summary(summary_tag.get_text() if summary_tag else None),
-                }
+            denom = max(len(cards) - 1, 1)
+            score = max(0.05, 1.0 - idx / denom)
+            items.append(
+                Item(
+                    id=Item.make_id("odoo_apps", url),
+                    source="odoo_apps",
+                    title=title,
+                    url=url,
+                    summary=_clean_summary(summary_tag.get_text() if summary_tag else None),
+                    score=score,
+                    published_at=now,
+                    topic="odoo_apps",
+                    meta={
+                        "author": author_tag.get_text(strip=True) if author_tag else None,
+                        "price": price_tag.get_text(strip=True) if price_tag else None,
+                    },
+                )
             )
-        if not raws:
-            return []
-        max_downloads = max((r["downloads"] or 0) for r in raws) or 1
-        return [
-            Item(
-                id=Item.make_id("odoo_apps", r["url"]),
-                source="odoo_apps",
-                title=r["title"],
-                url=r["url"],
-                summary=r["summary"],
-                score=_log_normalize(r["downloads"] or 0, max_downloads),
-                published_at=now,
-                topic="odoo_apps",
-                meta={
-                    "author": r["author"],
-                    "price": r["price"],
-                    "downloads": r["downloads"],
-                },
-            )
-            for r in raws
-        ]
+        return items
 
 
 def _now() -> datetime:
     return datetime.now(UTC)
-
-
-def _log_normalize(value: int, max_value: int) -> float:
-    if max_value <= 0:
-        return 0.0
-    return min(1.0, log(value + 1) / log(max_value + 1))
 
 
 def _entry_published(entry: Any) -> datetime | None:
@@ -213,16 +202,6 @@ def _feed_source_key(feed_url: str) -> str:
 
 
 _TAG_RE = re.compile(r"<[^>]+>")
-_INT_RE = re.compile(r"(\d[\d,]*)")
-
-
-def _parse_int(text: str | None) -> int | None:
-    if not text:
-        return None
-    m = _INT_RE.search(text)
-    if not m:
-        return None
-    return int(m.group(1).replace(",", ""))
 
 
 def _clean_summary(value: str | None) -> str | None:

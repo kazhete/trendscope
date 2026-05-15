@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from math import log
@@ -10,6 +12,8 @@ from typing import Any, Literal
 from trendscope.collectors.base import Collector, client, with_retries
 from trendscope.config import settings
 from trendscope.models import Item, Topic
+
+logger = logging.getLogger(__name__)
 
 Period = Literal["day", "week", "month"]
 
@@ -56,19 +60,42 @@ class GitHubAICollector(Collector):
         self.min_stars = min_stars
 
     async def fetch(self) -> list[Item]:
-        """Return a list of trending AI/ML repos for the configured period."""
-        data = await self._search(self._build_query())
-        repos = data.get("items") or []
+        """Return trending AI/ML repos: one Search query per topic, deduped by URL.
+
+        GitHub Search does not support boolean OR across qualifiers, so we issue
+        N parallel queries (one per topic) and merge. Results are deduplicated
+        by repo URL, sorted by stars desc, and capped at ``per_page``.
+        """
+        now = datetime.now(UTC)
+        results = await asyncio.gather(
+            *(self._search(self._build_query(t, now=now)) for t in self.topics),
+            return_exceptions=True,
+        )
+
+        seen: set[str] = set()
+        repos: list[dict[str, Any]] = []
+        for r in results:
+            if isinstance(r, BaseException):
+                logger.warning("github_ai topic search failed: %s", r)
+                continue
+            for repo in r.get("items") or []:
+                url = repo.get("html_url")
+                if not url or url in seen:
+                    continue
+                seen.add(url)
+                repos.append(repo)
+
         if not repos:
             return []
-        max_stars = max(int(r.get("stargazers_count", 0)) for r in repos) or 1
+        repos.sort(key=lambda r: int(r.get("stargazers_count") or 0), reverse=True)
+        repos = repos[: self.per_page]
+        max_stars = max(int(r.get("stargazers_count") or 0) for r in repos) or 1
         return [self._to_item(r, max_stars) for r in repos]
 
-    def _build_query(self, *, now: datetime | None = None) -> str:
+    def _build_query(self, topic: str, *, now: datetime | None = None) -> str:
         now = now or datetime.now(UTC)
         cutoff = (now - timedelta(days=_PERIOD_DAYS[self.period])).date().isoformat()
-        topics_clause = " OR ".join(f"topic:{t}" for t in self.topics)
-        return f"({topics_clause}) created:>{cutoff} stars:>={self.min_stars}"
+        return f"topic:{topic} created:>{cutoff} stars:>={self.min_stars}"
 
     @with_retries()
     async def _search(self, query: str) -> dict[str, Any]:

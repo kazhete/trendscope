@@ -13,7 +13,6 @@ from trendscope.collectors import ecommerce_news as mod
 from trendscope.collectors.ecommerce_news import (
     ODOO_APPS_BROWSE_URL,
     EcommerceNewsCollector,
-    _parse_int,
 )
 
 FIXED_NOW = datetime(2026, 5, 15, 12, 0, 0, tzinfo=UTC)
@@ -50,30 +49,29 @@ def _rss_xml(items: list[dict[str, str]], channel_title: str = "Ecom Blog") -> b
 
 
 def _odoo_apps_html(cards: list[dict[str, Any]]) -> str:
+    """Mirror the real apps.odoo.com markup: each card wraps an <a href>
+    that contains a summary <p>, an <h5> title, and an author/price row."""
     card_blocks = []
     for c in cards:
-        downloads = c.get("downloads")
-        downloads_block = (
-            f'<div class="loempia_panel_downloads">{downloads} Downloads</div>'
-            if downloads is not None
-            else ""
-        )
         summary_block = (
-            f'<div class="oe_module_desc">{c["summary"]}</div>' if c.get("summary") else ""
-        )
-        price_block = (
-            f'<div class="loempia_panel_price">{c["price"]}</div>' if c.get("price") else ""
+            f'<p class="loempia_panel_summary">{c["summary"]}</p>' if c.get("summary") else ""
         )
         author_block = (
-            f'<div class="loempia_panel_author">{c["author"]}</div>' if c.get("author") else ""
+            f'<div class="loempia_panel_author"><b>{c["author"]}</b></div>'
+            if c.get("author")
+            else ""
+        )
+        price_block = (
+            f'<div class="loempia_panel_price"><b>{c["price"]}</b></div>' if c.get("price") else ""
         )
         card_blocks.append(f"""
-        <div class="loempia_panel_summary">
-            <h5><a href="{c["href"]}">{c["title"]}</a></h5>
-            {author_block}
-            {price_block}
-            {downloads_block}
-            {summary_block}
+        <div class="loempia_app_entry loempia_app_card">
+            <a href="{c["href"]}">
+                {summary_block}
+                <h5><b>{c["title"]}</b></h5>
+                {author_block}
+                {price_block}
+            </a>
         </div>
         """)
     return "<html><body>" + "".join(card_blocks) + "</body></html>"
@@ -185,7 +183,6 @@ async def test_odoo_apps_scrape_returns_items_with_odoo_apps_topic():
                 "title": "Easy Accounting",
                 "author": "Acme Inc",
                 "price": "€49",
-                "downloads": "1,500",
                 "summary": "Simplify your accounting",
             },
             {
@@ -193,7 +190,6 @@ async def test_odoo_apps_scrape_returns_items_with_odoo_apps_topic():
                 "title": "Stock Helper",
                 "author": "Bob",
                 "price": "Free",
-                "downloads": "150",
                 "summary": "Stock utilities",
             },
         ]
@@ -205,18 +201,20 @@ async def test_odoo_apps_scrape_returns_items_with_odoo_apps_topic():
     assert len(items) == 2
     by_title = {i.title: i for i in items}
 
+    # Score is by list position: first card lands at 1.0.
     top = by_title["Easy Accounting"]
     assert top.source == "odoo_apps"
     assert top.topic == "odoo_apps"
     assert str(top.url) == "https://apps.odoo.com/apps/modules/19.0/account_easy"
     assert top.score == pytest.approx(1.0)
     assert top.summary == "Simplify your accounting"
-    assert top.meta["downloads"] == 1500
     assert top.meta["author"] == "Acme Inc"
     assert top.meta["price"] == "€49"
+    assert "downloads" not in top.meta
 
     lesser = by_title["Stock Helper"]
-    assert 0 < lesser.score < 1
+    assert lesser.score < top.score
+    assert lesser.score >= 0.05
 
 
 @respx.mock
@@ -239,11 +237,10 @@ async def test_odoo_apps_empty_page_returns_no_items():
 @respx.mock
 async def test_odoo_apps_skips_cards_without_link_or_title():
     html_body = """<html><body>
-        <div class="loempia_panel_summary"><h5><a></a></h5></div>
-        <div class="loempia_panel_summary"><h5></h5></div>
-        <div class="loempia_panel_summary">
-            <h5><a href="/apps/modules/19.0/ok">OK Module</a></h5>
-            <div class="loempia_panel_downloads">50 Downloads</div>
+        <div class="loempia_app_card"><a><h5>no href</h5></a></div>
+        <div class="loempia_app_card"><a href="/apps/modules/19.0/empty"></a></div>
+        <div class="loempia_app_card">
+            <a href="/apps/modules/19.0/ok"><h5>OK Module</h5></a>
         </div>
     </body></html>"""
     respx.get(ODOO_APPS_BROWSE_URL).mock(return_value=httpx.Response(200, text=html_body))
@@ -254,14 +251,7 @@ async def test_odoo_apps_skips_cards_without_link_or_title():
 @respx.mock
 async def test_apps_limit_caps_result_count():
     html_body = _odoo_apps_html(
-        [
-            {
-                "href": f"/apps/modules/19.0/m{n}",
-                "title": f"Module {n}",
-                "downloads": str(100 - n),
-            }
-            for n in range(50)
-        ]
+        [{"href": f"/apps/modules/19.0/m{n}", "title": f"Module {n}"} for n in range(50)]
     )
     respx.get(ODOO_APPS_BROWSE_URL).mock(return_value=httpx.Response(200, text=html_body))
     items = await EcommerceNewsCollector(rss_feeds=[], apps_limit=5).fetch()
@@ -304,15 +294,7 @@ async def test_combines_rss_and_odoo_apps():
     respx.get(ODOO_APPS_BROWSE_URL).mock(
         return_value=httpx.Response(
             200,
-            text=_odoo_apps_html(
-                [
-                    {
-                        "href": "/apps/modules/19.0/m1",
-                        "title": "Cool Module",
-                        "downloads": "100",
-                    }
-                ]
-            ),
+            text=_odoo_apps_html([{"href": "/apps/modules/19.0/m1", "title": "Cool Module"}]),
         )
     )
     items = await EcommerceNewsCollector(rss_feeds=[feed_url]).fetch()
@@ -346,21 +328,3 @@ async def test_failed_source_does_not_break_others():
     items = await EcommerceNewsCollector(rss_feeds=[feed_url]).fetch()
     sources = {i.source for i in items}
     assert sources == {"rss:blog.odoo.example"}
-
-
-# ---------- helper unit tests ----------
-
-
-@pytest.mark.parametrize(
-    ("raw", "expected"),
-    [
-        (None, None),
-        ("", None),
-        ("nothing here", None),
-        ("123", 123),
-        ("1,500 Downloads", 1500),
-        ("Downloads: 42", 42),
-    ],
-)
-def test_parse_int(raw: str | None, expected: int | None):
-    assert _parse_int(raw) == expected

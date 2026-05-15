@@ -79,33 +79,34 @@ def test_defaults():
 def test_build_query_period_day_uses_one_day_cutoff():
     c = GitHubAICollector(period="day")
     now = datetime(2026, 5, 15, tzinfo=UTC)
-    q = c._build_query(now=now)
+    q = c._build_query("llm", now=now)
     assert "created:>2026-05-14" in q
 
 
 def test_build_query_period_week_uses_seven_day_cutoff():
     c = GitHubAICollector(period="week")
     now = datetime(2026, 5, 15, tzinfo=UTC)
-    assert "created:>2026-05-08" in c._build_query(now=now)
+    assert "created:>2026-05-08" in c._build_query("llm", now=now)
 
 
 def test_build_query_period_month_uses_thirty_day_cutoff():
     c = GitHubAICollector(period="month")
     now = datetime(2026, 5, 15, tzinfo=UTC)
-    assert "created:>2026-04-15" in c._build_query(now=now)
+    assert "created:>2026-04-15" in c._build_query("llm", now=now)
 
 
-def test_build_query_ors_topics():
+def test_build_query_is_per_topic_without_boolean_or():
+    """GitHub Search doesn't honor (topic:A OR topic:B); we issue one query per topic."""
     c = GitHubAICollector(topics=["llm", "generative-ai"])
-    q = c._build_query(now=datetime(2026, 5, 15, tzinfo=UTC))
-    assert "topic:llm" in q
-    assert "topic:generative-ai" in q
-    assert " OR " in q
+    q = c._build_query("llm", now=datetime(2026, 5, 15, tzinfo=UTC))
+    assert q.startswith("topic:llm ")
+    assert "generative-ai" not in q
+    assert " OR " not in q
 
 
 def test_build_query_includes_min_stars():
     c = GitHubAICollector(min_stars=42)
-    assert "stars:>=42" in c._build_query(now=datetime(2026, 5, 15, tzinfo=UTC))
+    assert "stars:>=42" in c._build_query("llm", now=datetime(2026, 5, 15, tzinfo=UTC))
 
 
 # ---------- HTTP integration ----------
@@ -117,9 +118,10 @@ async def test_fetch_returns_normalized_items():
         _repo("alice/llm-thing", stars=1000, description="cool"),
         _repo("bob/ml-thing", stars=100, description=None),
     ]
+    # Same response for every per-topic request — dedup keeps each repo once.
     route = respx.get(GITHUB_SEARCH_URL).mock(return_value=_ok(repos))
 
-    items = await GitHubAICollector(period="week").fetch()
+    items = await GitHubAICollector(period="week", topics=["llm"]).fetch()
 
     assert route.called
     assert {i.title for i in items} == {"alice/llm-thing", "bob/ml-thing"}
@@ -136,6 +138,49 @@ async def test_fetch_returns_normalized_items():
 
     weaker = next(i for i in items if i.title == "bob/ml-thing")
     assert 0 < weaker.score < 1
+
+
+@respx.mock
+async def test_fetch_issues_one_request_per_topic():
+    route = respx.get(GITHUB_SEARCH_URL).mock(return_value=_ok([]))
+    await GitHubAICollector(topics=["llm", "generative-ai", "machine-learning"]).fetch()
+    assert route.call_count == 3
+    queries = [str(c.request.url.params["q"]) for c in route.calls]
+    assert any(q.startswith("topic:llm ") for q in queries)
+    assert any(q.startswith("topic:generative-ai ") for q in queries)
+    assert any(q.startswith("topic:machine-learning ") for q in queries)
+
+
+@respx.mock
+async def test_fetch_dedupes_repos_appearing_in_multiple_topic_searches():
+    # Same repo appears in both topic searches; should be emitted once.
+    shared = _repo("alice/multi-tagged", stars=500)
+    respx.get(GITHUB_SEARCH_URL).mock(return_value=_ok([shared]))
+
+    items = await GitHubAICollector(topics=["llm", "machine-learning"]).fetch()
+    assert len(items) == 1
+    assert items[0].title == "alice/multi-tagged"
+
+
+@respx.mock
+async def test_fetch_isolates_per_topic_failures():
+    # 404 is non-retryable, so the first topic's query fails immediately; the
+    # second topic still produces its item via gather(return_exceptions=True).
+    good = _repo("alice/ok", stars=100)
+    respx.get(GITHUB_SEARCH_URL).mock(side_effect=[httpx.Response(404), _ok([good])])
+    items = await GitHubAICollector(topics=["llm", "machine-learning"]).fetch()
+    assert [i.title for i in items] == ["alice/ok"]
+
+
+@respx.mock
+async def test_fetch_caps_results_at_per_page():
+    repos = [_repo(f"u/r{n}", stars=1000 - n) for n in range(50)]
+    respx.get(GITHUB_SEARCH_URL).mock(return_value=_ok(repos))
+    items = await GitHubAICollector(topics=["llm"], per_page=10).fetch()
+    assert len(items) == 10
+    # Sorted by stars desc post-merge
+    assert items[0].meta["stars"] == 1000
+    assert items[-1].meta["stars"] == 991
 
 
 @respx.mock
@@ -184,7 +229,7 @@ async def test_query_param_carries_topic_and_period(monkeypatch: pytest.MonkeyPa
     route = respx.get(GITHUB_SEARCH_URL).mock(return_value=_ok([]))
     await GitHubAICollector(period="day", topics=["llm"]).fetch()
     q = route.calls.last.request.url.params["q"]
-    assert "topic:llm" in q
+    assert q.startswith("topic:llm ")
     assert "created:>" in q
     assert "stars:>=5" in q
 
@@ -197,7 +242,7 @@ async def test_score_is_log_normalized_against_top_result():
         _repo("c/low", stars=10),
     ]
     respx.get(GITHUB_SEARCH_URL).mock(return_value=_ok(repos))
-    items = {i.title: i for i in await GitHubAICollector().fetch()}
+    items = {i.title: i for i in await GitHubAICollector(topics=["llm"]).fetch()}
     assert items["a/top"].score == pytest.approx(1.0)
     assert 0.5 < items["b/mid"].score < 1.0
     assert 0 < items["c/low"].score < items["b/mid"].score
