@@ -30,14 +30,17 @@ uv run trendscope build
 
 | Command | Description |
 |---|---|
-| `uv run trendscope collect` | Run all collectors, write `data/*.json` |
-| `uv run trendscope collect --source <name>` | Run a single collector |
+| `uv run trendscope collect` | Run all registered collectors, write `data/<name>.json` per collector |
+| `uv run trendscope collect --source <name>` | Run a single collector (`github_ai`, `github_general`, `ai_news`, `ecommerce_news`) |
 | `uv run trendscope render` | Render templates from `data/` to `dist/` |
-| `uv run trendscope build` | Full pipeline: collect + render |
+| `uv run trendscope build` | Full pipeline: collect all + render |
 | `uv run pytest` | Run the test suite |
 | `uv run ruff check . && uv run ruff format .` | Lint + format |
 | `uv run mypy` | Type-check (strict mode) |
-| `docker compose up --build` | Local nginx on `:8080` |
+| `docker compose up nginx` | Local nginx on `:8080` (serves `dist/`) |
+| `docker compose --profile pipeline run --rm runner` | Run the full pipeline in Docker |
+
+A single collector failure does not stop the others — its slot in the summary reads `error: <msg>` and that source's JSON file is left untouched.
 
 ## Layout
 

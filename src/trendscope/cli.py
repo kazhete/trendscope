@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import typer
@@ -21,12 +22,16 @@ def collect(
         "-s",
         help="Run a single collector by name (e.g. 'github_ai'). Omit to run all.",
     ),
+    data_dir: Path | None = typer.Option(
+        None, "--data-dir", help="Override data directory (default: settings.data_dir)."
+    ),
 ) -> None:
-    """Run collectors and write results to ``data/*.json``."""
-    if source:
-        typer.echo(f"[stub] collect: would run collector '{source}'")
-    else:
-        typer.echo("[stub] collect: would run all registered collectors")
+    """Run collectors and write results to ``data/<name>.json``."""
+    from trendscope.pipeline import run_collectors
+
+    summary = asyncio.run(run_collectors(source=source, data_dir=data_dir))
+    for name, info in summary.items():
+        typer.echo(f"  {name}: {info}")
 
 
 @app.command()
@@ -54,12 +59,15 @@ def build(
         None, "--dist-dir", help="Override dist directory (default: settings.dist_dir)."
     ),
 ) -> None:
-    """Full pipeline: collect + render."""
+    """Full pipeline: collect all sources + render."""
+    from trendscope.pipeline import run_collectors
     from trendscope.render import render_site
 
-    typer.echo("[stub] collect: would run all registered collectors")
+    summary = asyncio.run(run_collectors(data_dir=data_dir))
+    for name, info in summary.items():
+        typer.echo(f"  {name}: {info}")
     out = render_site(data_dir=data_dir, dist_dir=dist_dir)
-    typer.echo(f"Built site at {out}")
+    typer.echo(f"Rendered site to {out}")
 
 
 if __name__ == "__main__":
