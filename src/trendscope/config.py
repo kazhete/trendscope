@@ -24,5 +24,7 @@ class Settings(BaseSettings):
     http_timeout_seconds: float = 30.0
     user_agent: str = "trendscope/0.1 (+https://github.com/)"
 
+    ai_news_rss_feeds: list[str] = []
+
 
 settings = Settings()
