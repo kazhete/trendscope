@@ -33,3 +33,9 @@ dist/
 .idea/
 *.swp
 .DS_Store
+
+# Ansible
+deploy/ansible/inventory.ini
+deploy/ansible/group_vars/
+deploy/ansible/host_vars/
+*.retry

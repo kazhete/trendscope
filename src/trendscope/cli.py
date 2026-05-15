@@ -46,9 +46,20 @@ def render(
 
 
 @app.command()
-def build() -> None:
+def build(
+    data_dir: Path | None = typer.Option(
+        None, "--data-dir", help="Override data directory (default: settings.data_dir)."
+    ),
+    dist_dir: Path | None = typer.Option(
+        None, "--dist-dir", help="Override dist directory (default: settings.dist_dir)."
+    ),
+) -> None:
     """Full pipeline: collect + render."""
-    typer.echo("[stub] build: would run collect then render")
+    from trendscope.render import render_site
+
+    typer.echo("[stub] collect: would run all registered collectors")
+    out = render_site(data_dir=data_dir, dist_dir=dist_dir)
+    typer.echo(f"Built site at {out}")
 
 
 if __name__ == "__main__":

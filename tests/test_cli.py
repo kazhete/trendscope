@@ -40,6 +40,10 @@ def test_render(tmp_path):
     assert (dist_dir / "index.html").exists()
 
 
-def test_build():
-    result = runner.invoke(app, ["build"])
+def test_build(tmp_path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    dist_dir = tmp_path / "dist"
+    result = runner.invoke(app, ["build", "--data-dir", str(data_dir), "--dist-dir", str(dist_dir)])
     assert result.exit_code == 0
+    assert (dist_dir / "index.html").exists()

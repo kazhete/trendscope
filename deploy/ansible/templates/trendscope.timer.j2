@@ -1,0 +1,17 @@
+[Unit]
+Description=Periodic trigger for trendscope.service
+Requires=trendscope.service
+
+[Timer]
+# Wait a bit after boot before the first run so docker.service is fully up.
+OnBootSec=5min
+# Then run again every {{ timer_interval }} after the previous run finished.
+OnUnitActiveSec={{ timer_interval }}
+# Catch up on missed runs after downtime instead of waiting a full interval.
+Persistent=true
+# Spread fire times so co-deployed hosts don't all hit upstream APIs at once.
+RandomizedDelaySec={{ timer_randomized_delay }}
+Unit=trendscope.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,25 @@
+# Local: `docker compose up nginx` to serve dist/ at http://localhost:8080
+# Pipeline run: `docker compose run --rm runner` to regenerate dist/.
+# Runner is behind a profile so `docker compose up` doesn't start it.
+
+services:
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./dist:/usr/share/nginx/html:ro
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    restart: unless-stopped
+
+  runner:
+    build: .
+    profiles: ["pipeline"]
+    volumes:
+      - ./data:/data
+      - ./dist:/dist
+    environment:
+      TRENDSCOPE_GITHUB_TOKEN: ${TRENDSCOPE_GITHUB_TOKEN:-}
+      TRENDSCOPE_AI_NEWS_RSS_FEEDS: ${TRENDSCOPE_AI_NEWS_RSS_FEEDS:-[]}
+      TRENDSCOPE_ECOMMERCE_RSS_FEEDS: ${TRENDSCOPE_ECOMMERCE_RSS_FEEDS:-[]}
+    command: ["build"]

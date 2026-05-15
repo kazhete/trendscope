@@ -1,0 +1,17 @@
+[Unit]
+Description=Trendscope build (collect + render) — one-shot pipeline run
+Documentation=https://github.com/your-org/trendscope
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory={{ install_dir }}
+ExecStart=/usr/bin/docker compose --profile pipeline run --rm runner build
+TimeoutStartSec=10min
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
