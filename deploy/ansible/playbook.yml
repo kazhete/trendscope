@@ -1,0 +1,135 @@
+---
+# Deploys Trendscope on a Debian/Ubuntu host:
+#   1. installs Docker + Docker Compose plugin
+#   2. clones (or updates) the repo into {{ install_dir }}
+#   3. builds the runner image
+#   4. runs the pipeline once so dist/ is populated before nginx starts
+#   5. starts nginx via docker compose
+#   6. installs the systemd service + timer that runs the pipeline on a schedule
+#
+# Override vars on the command line or in a group_vars file:
+#   ansible-playbook playbook.yml -e "branch=main timer_interval=30min"
+
+- name: Deploy Trendscope
+  hosts: trendscope
+  become: true
+  vars:
+    install_dir: /opt/trendscope
+    repo_url: "https://github.com/your-org/trendscope.git"
+    branch: main
+    # systemd OnUnitActiveSec value — how often to re-run the pipeline
+    timer_interval: "1h"
+    # Spread runs across a 1m window to avoid herd effects when multiple hosts deploy
+    timer_randomized_delay: "1m"
+    github_token: ""
+    ai_news_rss_feeds_json: "[]"
+    ecommerce_rss_feeds_json: "[]"
+
+  tasks:
+    - name: Install system packages
+      ansible.builtin.apt:
+        name:
+          - git
+          - ca-certificates
+          - curl
+        state: present
+        update_cache: true
+
+    - name: Add Docker apt key
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        dest: /etc/apt/keyrings/docker.asc
+        mode: "0644"
+
+    - name: Add Docker apt repository
+      ansible.builtin.apt_repository:
+        repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        state: present
+        filename: docker
+
+    - name: Install Docker engine + compose plugin
+      ansible.builtin.apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-compose-plugin
+        state: present
+        update_cache: true
+
+    - name: Ensure install directory exists
+      ansible.builtin.file:
+        path: "{{ install_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Clone or update repo
+      ansible.builtin.git:
+        repo: "{{ repo_url }}"
+        dest: "{{ install_dir }}"
+        version: "{{ branch }}"
+        force: true
+
+    - name: Ensure data and dist directories exist
+      ansible.builtin.file:
+        path: "{{ install_dir }}/{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - data
+        - dist
+
+    - name: Write .env for compose (tokens, feed lists)
+      ansible.builtin.copy:
+        dest: "{{ install_dir }}/.env"
+        mode: "0600"
+        content: |
+          TRENDSCOPE_GITHUB_TOKEN={{ github_token }}
+          TRENDSCOPE_AI_NEWS_RSS_FEEDS={{ ai_news_rss_feeds_json }}
+          TRENDSCOPE_ECOMMERCE_RSS_FEEDS={{ ecommerce_rss_feeds_json }}
+
+    - name: Build runner image
+      ansible.builtin.command:
+        cmd: docker compose build runner
+        chdir: "{{ install_dir }}"
+      register: build_result
+      changed_when: "'Building' in build_result.stderr or 'naming to' in build_result.stderr"
+
+    - name: Run pipeline once to populate dist/
+      ansible.builtin.command:
+        cmd: docker compose --profile pipeline run --rm runner build
+        chdir: "{{ install_dir }}"
+      changed_when: true
+
+    - name: Start nginx
+      ansible.builtin.command:
+        cmd: docker compose up -d nginx
+        chdir: "{{ install_dir }}"
+      register: nginx_up
+      changed_when: "'Started' in nginx_up.stderr or 'Recreated' in nginx_up.stderr"
+
+    - name: Install systemd service unit
+      ansible.builtin.template:
+        src: trendscope.service.j2
+        dest: /etc/systemd/system/trendscope.service
+        mode: "0644"
+      notify: reload systemd
+
+    - name: Install systemd timer unit
+      ansible.builtin.template:
+        src: trendscope.timer.j2
+        dest: /etc/systemd/system/trendscope.timer
+        mode: "0644"
+      notify: reload systemd
+
+    - name: Enable and start the timer
+      ansible.builtin.systemd:
+        name: trendscope.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+
+  handlers:
+    - name: reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true

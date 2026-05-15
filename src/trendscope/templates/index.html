@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block content %}
+<h1 class="text-3xl font-bold mb-2">Topics</h1>
+<p class="text-slate-600 mb-8">Trending repos and curated news, refreshed on a schedule.</p>
+<div class="grid gap-4 md:grid-cols-2">
+    {% for topic_key, meta in topics.items() %}
+    <a href="{{ meta.slug }}.html"
+       class="block p-5 bg-white rounded-lg border border-slate-200 hover:border-slate-400 transition-colors">
+        <div class="flex items-baseline justify-between">
+            <h2 class="text-xl font-semibold">{{ meta.display }}</h2>
+            <span class="text-sm text-slate-500">{{ counts[topic_key] }} items</span>
+        </div>
+    </a>
+    {% endfor %}
+</div>
+{% endblock %}
