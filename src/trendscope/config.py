@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     user_agent: str = "trendscope/0.1 (+https://github.com/)"
 
     ai_news_rss_feeds: list[str] = []
+    ecommerce_rss_feeds: list[str] = []
 
 
 settings = Settings()
