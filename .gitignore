@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist-py/
+
+# Virtualenvs
+.venv/
+venv/
+
+# Tooling caches
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Trendscope outputs (per CLAUDE.md: never commit)
+data/*
+!data/.gitkeep
+dist/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+.DS_Store
